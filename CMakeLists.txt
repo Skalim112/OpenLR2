@@ -55,6 +55,7 @@ add_library(
     OpenLR2Lib
     LR2/En_audio.cpp
     LR2/En_dbio.cpp
+    LR2/En_dirscan.cpp
     LR2/En_fileutil.cpp
     LR2/En_graphic.cpp
     LR2/En_input.cpp
@@ -71,6 +72,7 @@ add_library(
     LR2/LR2_ir.cpp
     LR2/LR2_makemp3.cpp
     LR2/LR2_replay.cpp
+    LR2/LR2_scanfast.cpp
     LR2/LR2_skindraw.cpp
     LR2/LR2_skinload.cpp
     LR2/LR2_skinmanage.cpp

@@ -31,6 +31,7 @@
     <ClInclude Include="LR2\Engine.h" />
     <ClInclude Include="LR2\En_audio.h" />
     <ClInclude Include="LR2\En_dbio.h" />
+    <ClInclude Include="LR2\En_dirscan.h" />
     <ClInclude Include="LR2\En_fileutil.h" />
     <ClInclude Include="LR2\En_graphic.h" />
     <ClInclude Include="LR2\En_input.h" />
@@ -49,6 +50,7 @@
     <ClInclude Include="LR2\LR2_ir.h" />
     <ClInclude Include="LR2\LR2_makemp3.h" />
     <ClInclude Include="LR2\LR2_replay.h" />
+    <ClInclude Include="LR2\LR2_scanfast.h" />
     <ClInclude Include="LR2\LR2_skindraw.h" />
     <ClInclude Include="LR2\LR2_skinload.h" />
     <ClInclude Include="LR2\LR2_skinmanage.h" />
@@ -81,6 +83,7 @@
     <ClCompile Include="LR2\dbgtool.cpp" />
     <ClCompile Include="LR2\En_audio.cpp" />
     <ClCompile Include="LR2\En_dbio.cpp" />
+    <ClCompile Include="LR2\En_dirscan.cpp" />
     <ClCompile Include="LR2\En_fileutil.cpp" />
     <ClCompile Include="LR2\En_graphic.cpp" />
     <ClCompile Include="LR2\En_input.cpp" />
@@ -97,6 +100,7 @@
     <ClCompile Include="LR2\LR2_ir.cpp" />
     <ClCompile Include="LR2\LR2_makemp3.cpp" />
     <ClCompile Include="LR2\LR2_replay.cpp" />
+    <ClCompile Include="LR2\LR2_scanfast.cpp" />
     <ClCompile Include="LR2\LR2_skindraw.cpp" />
     <ClCompile Include="LR2\LR2_skinload.cpp" />
     <ClCompile Include="LR2\LR2_skinmanage.cpp" />

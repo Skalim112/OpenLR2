@@ -1,8 +1,11 @@
 ﻿#include "LR2_songmanage.h"
 #include "Engine.h"
+#include "LR2_scanfast.h"
 #include "LR2_statlong.h"
 #include "filesystem.h"
 #include "filesystem.h"
+#include <md5.h>
+#include <cstring>
 #include <iterator>
 #include <ranges>
 #include <vector>
@@ -12,6 +15,102 @@
 #endif // _WIN32
 
 int EnabledInsane;
+
+namespace {
+
+void WriteMD5Hex(CSTR& out, const MD5Context& ctx) {
+	sprintf((char*)out.body, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x",
+		ctx.digest[0], ctx.digest[1], ctx.digest[2], ctx.digest[3],
+		ctx.digest[4], ctx.digest[5], ctx.digest[6], ctx.digest[7],
+		ctx.digest[8], ctx.digest[9], ctx.digest[10], ctx.digest[11],
+		ctx.digest[12], ctx.digest[13], ctx.digest[14], ctx.digest[15]);
+}
+
+char ToUpperAscii(char ch) {
+	if ('a' <= ch && ch <= 'z') return ch - ('a' - 'A');
+	return ch;
+}
+
+bool StartsWithAsciiNoCase(const char* str, const char* head) {
+	if (!str || !head) return false;
+	while (*head) {
+		if (ToUpperAscii(*str) != ToUpperAscii(*head)) return false;
+		++str;
+		++head;
+	}
+	return true;
+}
+
+bool StartsWithAscii(const char* str, const char* head) {
+	if (!str || !head) return false;
+	return strncmp(str, head, strlen(head)) == 0;
+}
+
+bool IsAsciiDigit(char ch) {
+	return '0' <= ch && ch <= '9';
+}
+
+bool IsTextMetaLine(const char* line) {
+	return StartsWithAsciiNoCase(line, "#TITLE") ||
+		StartsWithAsciiNoCase(line, "#GENRE") ||
+		StartsWithAsciiNoCase(line, "#CATEGORY") ||
+		StartsWithAsciiNoCase(line, "#SUBTITLE") ||
+		StartsWithAsciiNoCase(line, "#ARTIST") ||
+		StartsWithAsciiNoCase(line, "#SUBARTIST") ||
+		StartsWithAsciiNoCase(line, "#INFORMATION_A") ||
+		StartsWithAsciiNoCase(line, "#INFORMATION_B") ||
+		StartsWithAsciiNoCase(line, "#TAG") ||
+		StartsWithAsciiNoCase(line, "#COMMAND") ||
+		StartsWithAsciiNoCase(line, "#STAGEFILE") ||
+		StartsWithAsciiNoCase(line, "#BANNER") ||
+		StartsWithAsciiNoCase(line, "#BACKBMP");
+}
+
+bool GetRawBodyInt(const char* line, const char* head, int* out) {
+	const size_t headLen = strlen(head);
+	if (!StartsWithAsciiNoCase(line, head)) return false;
+	if (strlen(line) <= headLen) return false;
+	*out = atol(line + headLen + 1);
+	return true;
+}
+
+void UpdateBpmRange(BMSMETA* meta, const int bpm) {
+	if (bpm <= 0) return;
+	if (meta->maxbpm == 0) {
+		meta->maxbpm = bpm;
+		meta->minbpm = bpm;
+	}
+	else if (bpm > meta->maxbpm) {
+		meta->maxbpm = bpm;
+	}
+	else if (bpm < meta->minbpm) {
+		meta->minbpm = bpm;
+	}
+}
+
+bool ParseTextMetaLine(BMSMETA* meta, CSTR* line) {
+	if (GetDifficulty(line, CSTR("#TITLE"), &meta->title, &meta->subtitle, &meta->difficulty)) return true;
+	if (GetStringBodyStr(line, CSTR("#GENRE"), &meta->genre)) {
+		CSTR none;
+		GetDifficulty(line, CSTR("#GENRE"), &none, &none, &meta->difficulty);
+		return true;
+	}
+	if (GetStringBodyStr(line, CSTR("#CATEGORY"), &meta->genre)) return true;
+	if (GetStringBodyStr(line, CSTR("#SUBTITLE"), &meta->subtitle)) return true;
+	if (GetStringBodyStr(line, CSTR("#ARTIST"), &meta->artist)) return true;
+	if (GetStringBodyStr(line, CSTR("#SUBARTIST"), &meta->subartist)) return true;
+	if (GetStringBodyStr(line, CSTR("#INFORMATION_A"), &meta->artist)) return true;
+	if (GetStringBodyStr(line, CSTR("#INFORMATION_B"), &meta->subartist)) return true;
+	if (GetStringBodyStr(line, CSTR("#TAG"), &meta->tag)) return true;
+	if (GetStringBodyStr(line, CSTR("#COMMAND"), &meta->tag)) return true;
+	if (GetStringBodyStr(line, CSTR("#STAGEFILE"), &meta->stagefilepath)) return true;
+	if (GetStringBodyStr(line, CSTR("#BANNER"), &meta->bannerpath)) return true;
+	if (GetStringBodyStr(line, CSTR("#BACKBMP"), &meta->backBMPpath)) return true;
+	return false;
+}
+
+} // namespace
+
 // thiscall in original code
 SONGDATA * COPY_SONGDATA(SONGDATA *s1, SONGDATA *s2){
 	s1->title = s2->title;
@@ -1717,7 +1816,8 @@ int GetFolderDataFromPath(CSTR path, sqlite3 *sql) {
 			path.body, meta.title.body, AssignCRC32("ROOT").body, meta.genre.body, meta.artist.body, meta.subartist.body, meta.tag.body, meta.selLevel, filetime, meta.judge, meta.bannerpath.body, now);
 		if (SQL_Run(str, sql) == 0) {
 			ErrorLogFmtAdd("新規登録なので検索を行います。\n");
-			SearchSongsFromPath(path, sql, path);
+			if (g_useFastScan) ScanSongsFast(path, sql, path);
+			else SearchSongsFromPath(path, sql, path);
 		}
 	}
 	else { // folderinfo not exist
@@ -1742,7 +1842,8 @@ int GetFolderDataFromPath(CSTR path, sqlite3 *sql) {
 				path.body, path.getFilename().body, AssignCRC32("ROOT").body, filetime, now);
 			if (SQL_Run(str, sql) == 0) {
 				ErrorLogFmtAdd("新規登録なので検索を行います。\n");
-				SearchSongsFromPath(path, sql, path);
+				if (g_useFastScan) ScanSongsFast(path, sql, path);
+				else SearchSongsFromPath(path, sql, path);
 			}
 		}
 	}
@@ -2632,6 +2733,7 @@ int ParseBMSMETA(BMSMETA *meta, CSTR filepath, char flag) {
 	float notes;
 	int lnobj = -12345;
 	bool flagIf;
+	MD5Context md5ctx;
 
 	if (flag) {
 		printfDx("Now Loading...\n%s\n",filepath.body);
@@ -2647,92 +2749,67 @@ int ParseBMSMETA(BMSMETA *meta, CSTR filepath, char flag) {
 	InitBMSMETA(meta);
 	notes = 0.0;
 	flagIf = 0;
-	pFile = fopen(filepath.body, "r");
+	pFile = fopen(filepath.body, "rb");
 	if (pFile == NULL) return 0;
+	md5Init(&md5ctx);
 
 	CSTR dir(filepath.getDirectory()); // check this works as intended
 
 	if (filepath.right(4).isSame(".pms")) meta->keymode = 9;
 
 	CSTR buffer(102401);
-	char* pBuffer = buffer.outstr();
-	for (pBuffer = fgets(pBuffer, 102400, pFile); pBuffer; pBuffer = fgets(pBuffer, 102400, pFile)) {
-		buffer = ansi2utf(pBuffer, 932).c_str();
+	while (char* pBuffer = fgets(buffer.outstr(), 102400, pFile)) {
+		md5Update(&md5ctx, reinterpret_cast<uint8_t*>(pBuffer), strlen(pBuffer));
 
-		if (buffer.left(3).isSame("#IF") && buffer.left(5).isDiff("#IF 1")) {
+		const char* rawLine = buffer.body;
+		if (StartsWithAscii(rawLine, "#IF") && !StartsWithAscii(rawLine, "#IF 1")) {
 			flagIf = 1;
 		}
-		else if (buffer.left(6).isSame("#ENDIF")) {
+		else if (StartsWithAscii(rawLine, "#ENDIF")) {
 			flagIf = 0;
 		}
-		else if (buffer.left(1).isDiff("#") || flagIf) {
-			pBuffer = buffer.atPos(0);
+		else if (rawLine[0] != '#' || flagIf) {
 		}
 		else {
-			buffer.trimWhiteSpace();
-			DealWhiteSpace(&buffer);
-			if (GetDifficulty(&buffer, CSTR("#TITLE"), &meta->title, &meta->subtitle, &meta->difficulty)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#GENRE"), &meta->genre)) {
-				CSTR none;
-				GetDifficulty(&buffer, CSTR("#GENRE"), &none, &none, &meta->difficulty);
+			const char* line = rawLine;
+			const int lineLen = static_cast<int>(strlen(line));
+
+			if (IsTextMetaLine(line)) {
+				CSTR utfLine(ansi2utf(line, 932).c_str());
+				utfLine.trimWhiteSpace();
+				DealWhiteSpace(&utfLine);
+				ParseTextMetaLine(meta, &utfLine);
 			}
-			else if (GetStringBodyStr(&buffer, CSTR("#CATEGORY"), &meta->genre)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#SUBTITLE"), &meta->subtitle)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#ARTIST"), &meta->artist)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#SUBARTIST"), &meta->subartist)) {}
-			else if (GetStringBodyInt(&buffer, CSTR("#PLAYLEVEL"), &meta->selLevel)) {}
-			else if (GetStringBodyInt(&buffer, CSTR("#EXLEVEL"), &meta->exlevel)) {}
-			else if (GetStringBodyInt(&buffer, CSTR("#MAXTRACKS"), &meta->selLevel)) {}
-			else if (GetStringBodyInt(&buffer, CSTR("#DIFFICULTY"), &meta->difficulty)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#INFORMATION_A"), &meta->artist)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#INFORMATION_B"), &meta->subartist)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#TAG"), &meta->tag)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#COMMAND"), &meta->tag)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#STAGEFILE"), &meta->stagefilepath)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#BANNER"), &meta->bannerpath)) {}
-			else if (GetStringBodyStr(&buffer, CSTR("#BACKBMP"), &meta->backBMPpath)) {}
-			else if (buffer.left(13).isSame("#CUSTOMFOLDER")) {
+			else if (GetRawBodyInt(line, "#PLAYLEVEL", &meta->selLevel)) {}
+			else if (GetRawBodyInt(line, "#EXLEVEL", &meta->exlevel)) {}
+			else if (GetRawBodyInt(line, "#MAXTRACKS", &meta->selLevel)) {}
+			else if (GetRawBodyInt(line, "#DIFFICULTY", &meta->difficulty)) {}
+			else if (StartsWithAscii(line, "#CUSTOMFOLDER")) {
 				meta->judge = 2;
 			}
-			else if (buffer.left(7).isSame("#FP/DSC")) {
+			else if (StartsWithAscii(line, "#FP/DSC")) {
 				meta->keymode = 9;
 			}
-			else if (GetStringBodyInt(&buffer, CSTR("#RANK"), &meta->judge)) {}
-			else if (buffer.left(6).isSame("#LNOBJ")) {
+			else if (GetRawBodyInt(line, "#RANK", &meta->judge)) {}
+			else if (StartsWithAscii(line, "#LNOBJ")) {
 				meta->longnote = 1;
-				lnobj = Base36ToInt(*buffer.atPos(7), *buffer.atPos(8));
+				const char ch1 = lineLen > 7 ? line[7] : '\0';
+				const char ch2 = lineLen > 8 ? line[8] : '\0';
+				lnobj = Base36ToInt(ch1, ch2);
 			}
-			else if (buffer.left(4).isSame("#BMP")) {
+			else if (StartsWithAscii(line, "#BMP")) {
 				meta->bga = 1;
 			}
-			else if (buffer.left(5).isSame("#RAND")) {
+			else if (StartsWithAscii(line, "#RAND")) {
 				meta->random = 1;
 			}
-			else if (buffer.left(4).isSame("#BPM")) {
-				int bpm;
-				if (buffer.left(5).isSame("#BPM ")) {
-					bpm = atol(buffer.right(buffer.length() - 5));
-				}
-				else {
-					bpm = atol(buffer.right(buffer.length() - 7));
-				}
-
-				if (bpm > 0) {
-					if (meta->maxbpm == 0) {
-						meta->maxbpm = bpm;
-						meta->minbpm = bpm;
-					}
-					else if (bpm > meta->maxbpm) {
-						meta->maxbpm = bpm;
-					}
-					else if (bpm < meta->minbpm) {
-						meta->minbpm = bpm;
-					}
-				}
+			else if (StartsWithAscii(line, "#BPM")) {
+				const int bpm = StartsWithAscii(line, "#BPM ") ? atol(line + 5) : (lineLen > 7 ? atol(line + 7) : 0);
+				UpdateBpmRange(meta, bpm);
 			}
-			else if( isdigit(*(buffer.atPos(1))) && isdigit(*(buffer.atPos(2))) && isdigit(*(buffer.atPos(3))) && isdigit(*(buffer.atPos(4))) && isdigit(*(buffer.atPos(5))) ){
+			else if (lineLen > 5 && IsAsciiDigit(line[1]) && IsAsciiDigit(line[2]) && IsAsciiDigit(line[3]) && IsAsciiDigit(line[4]) && IsAsciiDigit(line[5])) {
 				//TOFIX : There is no need to decrease variable data, still it does. it makes karinote include invisible and longnote(0.5 to 1)
-				int data = atol(buffer.getSliced(4, 2));
+				int data = (line[4] - '0') * 10 + line[5] - '0';
 				if (51 <= data && data <= 69) {
 					data -= 40;
 					meta->longnote = 1;
@@ -2755,35 +2832,26 @@ int ParseBMSMETA(BMSMETA *meta, CSTR filepath, char flag) {
 				}
 				
 				if (data == 3) {
-					int c = (buffer.length() - 7) / 2;
+					int c = (lineLen - 7) / 2;
 					for (int cur = 7, i = 0; i < c; cur += 2, i++) {
-						int d = HEXcharToInt(*buffer.atPos(cur), *buffer.atPos(cur + 1));
-						if (d > 0) {
-							if (meta->maxbpm == 0) {
-								meta->maxbpm = d;
-								meta->minbpm = d;
-							}
-							else if (d > meta->maxbpm) {
-								meta->maxbpm = d;
-							}
-							else if (d < meta->minbpm) {
-								meta->minbpm = d;
-							}
-						}
+						const int d = HEXcharToInt(line[cur], line[cur + 1]);
+						UpdateBpmRange(meta, d);
 					}
 				}
 				else if (11 <= data && data <= 29) {
-					int c = (buffer.length() - 7) / 2;
+					int c = (lineLen - 7) / 2;
 					for (int cur = 7, i = 0; i < c; cur += 2, i++) {
-						if (Base36ToInt(*buffer.atPos(cur), *buffer.atPos(cur + 1)) && Base36ToInt(*buffer.atPos(cur), *buffer.atPos(cur + 1)) != lnobj ) {
+						const int obj = Base36ToInt(line[cur], line[cur + 1]);
+						if (obj && obj != lnobj ) {
 							notes++;
 						}
 					}
 				}
 				else if (51 <= data && data <= 69) {
-					int c = (buffer.length() - 7) / 2;
+					int c = (lineLen - 7) / 2;
 					for (int cur = 7, i = 0; i < c; cur += 2, i++) {
-						if (Base36ToInt(*buffer.atPos(cur), *buffer.atPos(cur + 1)) && Base36ToInt(*buffer.atPos(cur), *buffer.atPos(cur + 1)) != lnobj ) {
+						const int obj = Base36ToInt(line[cur], line[cur + 1]);
+						if (obj && obj != lnobj ) {
 							notes += 0.5;
 						}
 					}
@@ -2794,6 +2862,7 @@ int ParseBMSMETA(BMSMETA *meta, CSTR filepath, char flag) {
 	}
 
 	fclose(pFile);
+	md5Finalize(&md5ctx);
 	if (meta->difficulty == -1) {
 		CSTR sdsd(meta->filepath);
 		sdsd.left(sdsd.length() - 4); //after all, not used
@@ -2866,7 +2935,7 @@ int ParseBMSMETA(BMSMETA *meta, CSTR filepath, char flag) {
 		if (sdsd.left(3).isSame("10l")) meta->difficulty = 1;
 	} // TOFIX: meta->filepath is not loaded yet, so above this is useless hahahaha
 	//TOFIX: find difficulty at left???
-	makeFileHash(filepath, meta->hash); //test : CSTR to char* as oBuf : possible
+	WriteMD5Hex(meta->hash, md5ctx);
 	meta->parentfolderpath = filepath.getParentDirectory();
 	meta->filepath = filepath;
 	meta->filename = filepath.getFilename();
